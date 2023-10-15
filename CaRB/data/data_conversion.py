@@ -7,8 +7,6 @@ import sys
 import time
 
 
-openai.api_key = "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"
-
 
 def reformat_for_annotation(args):
     for subset in ['dev', 'test']:
