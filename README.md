@@ -46,14 +46,20 @@ Other options:
 
 If more than one node is required, exclusive mode --exclusive and --gres=gpu:4 options must be included in your submission script.
 
-### Link to LoRA-trained model
+## Performance on Test2 set of CaRB (our test set)
+
+| Model | Levenshtein Distance | Macro F-1 | Micro F-1 |
+| --- | --- | --- | --- |
+| LoRA LLaMA-7b | 5.73 | 48.51% | 44.08% |
+
+## Link to LoRA-trained model
 
 [Here](https://huggingface.co/Teddy487/LLaMA2-7b-for-OpenIE).
 
-### Other requirements
+## Other requirements
 
 Please use `python >= 3.7` to ensure correct behavior w.r.t item ordering.
 
-### Bug log
+## Bug log
 - LLaMA2 generate not compatible with do_sample=True, causes error: `RuntimeError: probability tensor contains either inf, nan or element < 0`
 - HuggingFace Trainer bug: when doing trainer.evaluate() with the test set, the trainer gets stuck after batch 23 / 53 (bsz 8), cpu usage stays at 100% with no progress. Problem does not exist when evaluating with the validation set, or doing evaluation manually without the trainer.
