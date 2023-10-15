@@ -5,35 +5,44 @@ import json
 import time
 
 
-def prepare_input(entry):
-    sent = entry['sent']
-    tpls = []
-    for tpl in entry['triples']:
-        pred = tpl['pred']
-        auxi = tpl['auxi']
-        subj = tpl['subj']
-        objs = tpl['objs']
-        pred_str = ' ### '.join(auxi + [pred])
+def prepare_input(entry, has_labels=True):
+    if has_labels:
+        sent = entry['sent']
+        tpls = []
+        for tpl in entry['triples']:
+            pred = tpl['pred']
+            auxi = tpl['auxi']
+            subj = tpl['subj']
+            objs = tpl['objs']
+            pred_str = ' ### '.join(auxi + [pred])
 
-        obj_strs = []
-        for obj in objs:
-            curr_str = obj[1] if len(obj[0]) == 0 else f"{obj[0]} ### {obj[1]}"
-            obj_strs.append(curr_str)
-        tpl_str = ' ,, '.join([subj, pred_str] + obj_strs)
-        tpls.append(tpl_str)
+            obj_strs = []
+            for obj in objs:
+                curr_str = obj[1] if len(obj[0]) == 0 else f"{obj[0]} ### {obj[1]}"
+                obj_strs.append(curr_str)
+            tpl_str = ' ,, '.join([subj, pred_str] + obj_strs)
+            tpls.append(tpl_str)
+    else:
+        sent = entry['s']
+        ident = f"{entry['articleId']}_{entry['lineId']}"
+        tpls = []
     
     instruction = f"You are an Open IE system to extract open relation triples. Format: \n"\
     "<subject> ,, <auxilliary ### predicate> ,, <prep1 ### object1> ,, <prep2 ### object2> ,, ... ."
     input_str = f"<s>[INST] <<SYS>>\n{instruction}\n<</SYS>>\n\nExtract a list of open relation triples "\
 f"from the following sentence: \n{sent} [/INST]\n1. "
-    target_str = tpls[0]
-    for i, tpl in enumerate(tpls):
-        if i == 0:
-            continue
-        target_str += f"\n{i+1}. {tpl}"
-    # print(f"input_str + target_str: {input_str + target_str}")
     
-    return input_str, target_str
+    if has_labels:
+        target_str = tpls[0]
+        for i, tpl in enumerate(tpls):
+            if i == 0:
+                continue
+            target_str += f"\n{i+1}. {tpl}"
+        # print(f"input_str + target_str: {input_str + target_str}")
+        
+        return input_str, target_str
+    else:
+        return input_str, ident
 
 class CaRBDataset(Dataset):
     def __init__(self, ifn, tokenizer, max_length=1024):
@@ -44,7 +53,7 @@ class CaRBDataset(Dataset):
             for line in ifp:
                 item = json.loads(line)
                 # TODO: should we blend in CausalLM pretraining to mitigate forgetting?
-                input_str, target_str = prepare_input(item)
+                input_str, target_str = prepare_input(item, has_labels=True)
                 self.entries.append((input_str, target_str))
     
     def __len__(self):
@@ -120,23 +129,32 @@ def collate_fn(batch, pad_method: str, tokenizer: LlamaTokenizerFast):
 
 
 class InferenceDataset(Dataset):
-    def __init__(self, ifn, tokenizer, max_length=1024):
+    def __init__(self, ifn, tokenizer, max_length=1024, has_labels=False):
         self.entries = []
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.has_labels = has_labels
         with open(ifn, 'r', encoding='utf8') as ifp:
             for line in ifp:
                 item = json.loads(line)
                 # TODO: should we blend in CausalLM pretraining to mitigate forgetting?
-                input_str, target_str = prepare_input(item)
-                self.entries.append((input_str, target_str))
+                if has_labels:
+                    input_str, target_str = prepare_input(item, has_labels=True)
+                    self.entries.append((input_str, target_str))
+                else:
+                    input_str, ident = prepare_input(item, has_labels=False)
+                    self.entries.append((input_str, ident))
     
     def __len__(self):
         return len(self.entries)
     
     # inspired by https://huggingface.co/learn/nlp-course/chapter7/6?fw=pt#preparing-the-dataset
     def __getitem__(self, idx):
-        prompt_str, target_str = self.entries[idx]
+        if self.has_labels:
+            prompt_str, target_str = self.entries[idx]
+        else:
+            prompt_str, ident = self.entries[idx]
+
         prompt_ids = self.tokenizer(prompt_str, add_special_tokens=False, return_tensors='pt')
         prompt_ids = prompt_ids['input_ids'].squeeze(0)
         if prompt_ids.shape[0] > self.max_length:
@@ -144,10 +162,17 @@ class InferenceDataset(Dataset):
         else:
             pass
 
-        return {
-            'input_ids': prompt_ids,
-            'labels': target_str
-        }
+        if self.has_labels:
+            return {
+                'input_ids': prompt_ids,
+                'labels': target_str
+            }
+        else:
+            return {
+                'input_ids': prompt_ids,
+                'ident': ident
+            }
+
 
 
 def inf_collate(batch, pad_method: str, tokenizer: LlamaTokenizerFast):
@@ -174,14 +199,22 @@ def inf_collate(batch, pad_method: str, tokenizer: LlamaTokenizerFast):
         raise NotImplementedError
 
     input_ids = torch.stack([item['input_ids'] for item in batch])
-    labels = [item['labels'] for item in batch]
+    if 'labels' in batch[0]:
+        labels = [item['labels'] for item in batch]
+        return {
+            'input_ids': input_ids,
+            'labels': labels,
+            # 'length': torch.tensor(lengths),
+        }
+    elif 'ident' in batch[0]:
+        idents = [item['ident'] for item in batch]
+        return {
+            'input_ids': input_ids,
+            'idents': idents
+        }
+    else:
+        raise ValueError
 
-    return {
-        'input_ids': input_ids,
-        'labels': labels,
-        # 'length': torch.tensor(lengths),
-    }
-    
 
 if __name__ == '__main__':
     tokenizer = LlamaTokenizerFast.from_pretrained('../lms/llama2-7b-chat-hf/')

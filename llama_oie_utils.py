@@ -14,7 +14,7 @@ from peft.tuners import PrefixEncoder, PromptEmbedding, PromptEncoder
 
 def lora_wrap(model, lora_r, lora_alpha, lora_dropout):
     peft_config = LoraConfig(task_type=TaskType.CAUSAL_LM, inference_mode=False, r=lora_r, lora_alpha=lora_alpha,
-                                lora_dropout=lora_dropout, target_modules=["q", "k", "v", "o"])  # TODO: check target_modules
+                                lora_dropout=lora_dropout)  #, target_modules=["q", "k", "v", "o"])  # TODO: check target_modules
     model = get_peft_model(model, peft_config)
     model.print_trainable_parameters()
     return model, peft_config

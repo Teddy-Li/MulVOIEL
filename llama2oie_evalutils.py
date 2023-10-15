@@ -5,6 +5,10 @@ from transformers import LlamaTokenizerFast
 from typing import List
 from itertools import permutations
 
+import signal
+
+def handler(signum, frame):
+    raise TimeoutError("Code timed out!")
 
 def tokenize_triple_perms(tpl_dict: dict, tokenizer, perm: bool) -> List[str]:
     perm_candidates = []
@@ -31,6 +35,8 @@ def parse_outstr_to_triples(oie_str: str):
     output_triples = []
 
     tpl_strs = oie_str.split('\n')
+    tpl_strs = [x.strip(' ') for x in tpl_strs]
+    tpl_strs = list(set(tpl_strs))
     for tidx, tstr in enumerate(tpl_strs):
         if tidx > 0:
             t_list = tstr.split('.')
@@ -197,20 +203,30 @@ def compare_prediction_gold(pred_str: str, gold_str: str, lemmatizer: WordNetLem
     rec = 1.0 * recall_numerator / recall_denominator if recall_denominator > 0 else 0.0
     f_score = (1 + f_score_beta ** 2) * prec * rec / (f_score_beta ** 2 * prec + rec) if prec + rec > 0 else 0.0
 
-    levenshtein_matrix = [[None for _ in pred_triples] for __ in gold_triples]
-    for gidx, gold_tpl in enumerate(gold_triples):
-        for pidx, pred_tpl in enumerate(pred_triples):
-            # Calculate the minimum Levenshtein distance between the gold and predicted triples (with any permutation of objects)
-            min_scr = None
-            gold = tokenize_triple_perms(gold_tpl, tokenizer, perm=False)
-            pred_perms = tokenize_triple_perms(pred_tpl, tokenizer, perm=True)
-            for pperm in pred_perms:
-                curr_score = levenstein_distance(gold, pperm)
-                if min_scr is None or curr_score < min_scr:
-                    min_scr = curr_score
-            levenshtein_matrix[gidx][pidx] = min_scr
-    _, levenshtein_dists = get_match_sum(len(gold_triples), len(pred_triples), levenshtein_matrix, higher_is_better=False)
-    # TODO: select the best match for each gold triple
+    signal.signal(signal.SIGALRM, handler)
+    signal.alarm(20)
+    try:
+        levenshtein_matrix = [[None for _ in pred_triples] for __ in gold_triples]
+        for gidx, gold_tpl in enumerate(gold_triples):
+            for pidx, pred_tpl in enumerate(pred_triples):
+                # Calculate the minimum Levenshtein distance between the gold and predicted triples (with any permutation of objects)
+                min_scr = None
+                gold = tokenize_triple_perms(gold_tpl, tokenizer, perm=False)
+                pred_perms = tokenize_triple_perms(pred_tpl, tokenizer, perm=True)
+                for pperm in pred_perms:
+                    curr_score = levenstein_distance(gold, pperm)
+                    if min_scr is None or curr_score < min_scr:
+                        min_scr = curr_score
+                levenshtein_matrix[gidx][pidx] = min_scr
+        _, levenshtein_dists = get_match_sum(len(gold_triples), len(pred_triples), levenshtein_matrix, higher_is_better=False)
+        # TODO: select the best match for each gold triple
+    except TimeoutError as te:
+        print(te)
+        min_len = min(len(gold_triples), len(pred_triples))
+        levenshtein_dists = [20 for x in range(min_len)]
+    finally:
+        # Disable the alarm
+        signal.alarm(0)
 
     return {'prec_num': precision_numerator, 'prec_den': precision_denominator, 'prec': prec,
             'rec_num': recall_numerator, 'rec_den': recall_denominator, 'rec': rec,
