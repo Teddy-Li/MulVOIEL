@@ -48,7 +48,7 @@ If more than one node is required, exclusive mode --exclusive and --gres=gpu:4 o
 
 ### Link to LoRA-trained model
 
-[Here]().
+[Here](https://huggingface.co/Teddy487/LLaMA2-7b-for-OpenIE).
 
 ### Other requirements
 
