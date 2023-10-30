@@ -3,14 +3,15 @@ import time
 import fire
 import torch.cuda
 from torch.utils.data import DataLoader
+import torch
 import json
 import argparse
 import os
 import sys
 import shutil
 import glob
+from tqdm import tqdm
 from nltk.stem import WordNetLemmatizer
-import torch.distributed as dist
 from torch.distributed.fsdp import (
     FullyShardedDataParallel as FSDP,
 )
@@ -23,6 +24,7 @@ from llama_oie_utils import lora_wrap, set_profiler, compute_metrics
 from config.fsdp import fsdp_config
 from llama2oie_dataset import CaRBDataset, collate_fn, InferenceDataset, inf_collate
 from llama2oie_evalutils import compare_prediction_gold, parse_outstr_to_triples
+from torch.cuda.amp import autocast
 
 
 def prepare_input(entry):
@@ -46,7 +48,10 @@ def prepare_input(entry):
 
 def get_model_output(model, tokenizer, gen_configs, input_ids):
     torch.cuda.empty_cache()
-    input_ids = input_ids.to('cuda:0')
+    if isinstance(model, torch.nn.DataParallel):
+        input_ids = input_ids.to('cuda')
+    else:
+        input_ids = input_ids.to('cuda:0')
     with torch.no_grad():
         output = model.generate(inputs=input_ids, generation_config=gen_configs)
     total_outlists = output.tolist()  # output.sequences.tolist()
@@ -82,9 +87,10 @@ def get_model_output(model, tokenizer, gen_configs, input_ids):
 
 def train_llama2_peft(args, model_path):
 
+    load_dtype = torch.float16 if args.use_16_full else torch.float32
     # model, tokenizer, gen_configs = get_model(model_path, args.max_new_tokens, args.machine, use_accelerate=not args.disable_accelerate,
                                                 # peft_config=peft_config)
-    model = LlamaForCausalLM.from_pretrained(model_path, device_map='auto',
+    model = LlamaForCausalLM.from_pretrained(model_path, device_map='auto', torch_dtype=load_dtype
                                              )  #  , no_split_module_classes=['LlamaDecoderLayer']
 
     # tokenizer is used to pre-process the dataset, so is not directly involved in Trainer.
@@ -135,10 +141,12 @@ def train_llama2_peft(args, model_path):
     
     bf16, fp16 = False, False
     if args.use_16:
-        if torch.cuda.is_bf16_supported():
-            bf16 = True
-        else:
-            fp16 = True
+        # TODO: unmask!
+        # if torch.cuda.is_bf16_supported():
+        #     bf16 = True
+        # else:
+        #     fp16 = True
+        fp16 = True
     else:
         pass
     fp16_fulleval = fp16 and args.use_16_full
@@ -147,9 +155,8 @@ def train_llama2_peft(args, model_path):
     training_args = TrainingArguments(
         output_dir=args.ckpt_path,
         overwrite_output_dir=True,
-        bf16=bf16,
-        fp16=fp16,
-
+        # bf16=bf16,
+        # fp16=fp16,
         evaluation_strategy='steps',
         eval_steps=100,
         per_device_train_batch_size=args.train_bsz,
@@ -224,6 +231,8 @@ def eval_llama2_peft(args, model_path, ckpt_path, eval_fn):
         report_to=['tensorboard'],
         # resume_from_checkpoint=None,
         include_inputs_for_metrics=False,
+        fp16_full_eval=args.use_16_full,
+        fp16=args.use_16,
         # auto_find_batch_size=True,
         # torch_compile=True,
     )
@@ -258,19 +267,31 @@ def inference_llama2_peft(args, model_path, ckpt_path, inference_fn, inference_i
     if not evaluate and not write_to_file:
         print(f"Neither evaluation nor write_to_file is set, exiting...", file=sys.stderr)
         return
-    
+    print(f"Running inference for inference file: {inference_id}...")
     lemmatizer = WordNetLemmatizer()
     # peft_config = LoraConfig.from_pretrained(os.path.join(model_path, 'peft'))
-    model = LlamaForCausalLM.from_pretrained(model_path, device_map='auto',
-                                             max_memory=args.max_memory)  #  , no_split_module_classes=['LlamaDecoderLayer']
+    load_dtype = torch.float16 if args.use_16_full else torch.float32
+
+    if args.machine == 'gala1dp':
+        # do data parallelism
+        model = LlamaForCausalLM.from_pretrained(model_path, torch_dtype=load_dtype)
+    else:
+        model = LlamaForCausalLM.from_pretrained(model_path, device_map='auto',
+                                                max_memory=args.max_memory, torch_dtype=load_dtype)  #  , no_split_module_classes=['LlamaDecoderLayer']
 
     element_weights = {'subj': 1.0, 'pred': 1.0, 'auxi': 1.0, 'obj': 1.0}
 
     # tokenizer is used to pre-process the dataset, so is not directly involved in Trainer.
     tokenizer = LlamaTokenizer.from_pretrained(model_path)
     print(f"Loading loRA checkpoint from {ckpt_path}...")
-    model = PeftModel.from_pretrained(model, ckpt_path)
+    model = PeftModel.from_pretrained(model, ckpt_path, torch_dtype=load_dtype)
     model.eval()
+    model = torch.compile(model)
+
+    # if args.machine == 'gala1dp':
+    #     model = torch.nn.DataParallel(model)
+    # else:
+    #     pass
 
     if args.pad_method == 'bos':
         tokenizer.padding_side = 'left'
@@ -306,6 +327,9 @@ def inference_llama2_peft(args, model_path, ckpt_path, inference_fn, inference_i
     eval_dataloader = DataLoader(eval_dataset, batch_size=args.eval_bsz, shuffle=False,
                                                     collate_fn=collate_partial)
     
+    print(f"FP-16 enabled flag: {args.use_16}")
+    print(f"FP-16 full enabled flag: {args.use_16_full}")
+
     prediction_strs = []
     label_strs = []
     eval_dicts = []
@@ -316,18 +340,20 @@ def inference_llama2_peft(args, model_path, ckpt_path, inference_fn, inference_i
     else:
         out_fp = None
 
-    for bidx, batch in enumerate(eval_dataloader):
-        if bidx % (1 if debug else 100) == 0:
-            durr = time.time() - start_t
-            print(f"--> Batch {bidx} / {len(eval_dataloader)} done; time elapsed = {durr//60} m {durr%60:.2f} s")
-        batch_output_strs = get_model_output(model, tokenizer, gen_configs, batch['input_ids'])
+    for batch in tqdm(eval_dataloader):
+        # if bidx % (1 if debug else 100) == 0:
+        #     durr = time.time() - start_t
+        #     print(f"--> Batch {bidx} / {len(eval_dataloader)} done; time elapsed = {durr // 3600} hrs {(durr % 3600) // 60} m {(durr % 3600) % 60:.2f} s")
+        
+        with autocast(enabled=args.use_16):
+            batch_output_strs = get_model_output(model, tokenizer, gen_configs, batch['input_ids'])
 
         if out_fp is not None:
             for inbatch_i, outstr in enumerate(batch_output_strs):
                 cur_triples = parse_outstr_to_triples(outstr)
-                if 'ident' in batch:
-                    ident = batch['ident'][inbatch_i]
-                    out_line = json.dumps({'ident': ident, 'triples': cur_triples}, ensure_ascii=False)
+                if 'idents' in batch:
+                    ident = batch['idents'][inbatch_i]
+                    out_line = json.dumps({'idents': ident, 'triples': cur_triples}, ensure_ascii=False)
                 else:
                     assert 'labels' in batch
                     label = batch['labels'][inbatch_i]
@@ -353,14 +379,8 @@ def inference_llama2_peft(args, model_path, ckpt_path, inference_fn, inference_i
                 print(entry_eval_dict)
         # print(f"--> Batch {bidx} done")
     
-    full_durr = time.time() - start_t
-    print(f"Eval GPU run time: {time.time() - start_t} s")
-
-    if write_to_file:
-        with open(os.path.join(args.ckpt_path, f'{inference_id}_inference.json'), 'w', encoding='utf8') as f:
-            json.dump([{'prdiction': x, 'label': y} for x, y in zip(prediction_strs, label_strs)], f, indent=4, ensure_ascii=False)
-    else:
-        pass
+    durr = time.time() - start_t
+    print(f"Inference GPU total run time: {durr//3600} hrs {(durr%3600)//60} m {(durr%3600)%60:.2f} s")
 
     if evaluate:
         macro_prec = sum([x['prec'] for x in eval_dicts]) / len(eval_dicts)
@@ -412,15 +432,13 @@ if __name__ == "__main__":
     parser.add_argument('--model_root', type=str, default='')  # '/work/ec216/ec216/shared/lms'
     parser.add_argument("--model_name", type=str, default="llama2-7b-chat-hf")
     parser.add_argument('--task', type=str, default='peft')
-    parser.add_argument('--machine', type=str, default='cirrus', choices=['cirrus', 'gala1'])
-    # parser.add_argument('--max_new_tokens', type=int, default=1000)
-    # parser.add_argument('--disable_accelerate', action='store_true')
+    parser.add_argument('--machine', type=str, default='cirrus', choices=['cirrus', 'gala1', 'cirrus_half', 'gala1dp', 'gala1sgl'])
 
     parser.add_argument('--data_root', type=str, default='./CaRB/data/CaRBent_gold')
     parser.add_argument('--train_fn', type=str, default='dev_reanno.json')
     parser.add_argument('--dev_fn', type=str, default='test_1_reanno.json')
     parser.add_argument('--test_fn', type=str, default='test_2_reanno.json')
-    parser.add_argument('--max_length', type=int, default=512)
+    parser.add_argument('--max_length', type=int, default=256)
 
     parser.add_argument('--ckpt_path', type=str, default='./ckpts/%s_%s_%s_%e/')
     parser.add_argument('--enable_profiler', action='store_true')
@@ -437,7 +455,7 @@ if __name__ == "__main__":
 
     # the following block of arguments are for inference generation only.
     parser.add_argument('--inf_ckpt_name', type=str, default='best_model')
-    parser.add_argument('--inference_fn', type=str, default=None, help='the inference file name, if set to None, will use the test set.')
+    parser.add_argument('--inference_fn', type=str, default='newsspike_%s.json', help='the inference file name, if set to None, will use the test set.')
     parser.add_argument('--inference_id', type=str, default='test')
     parser.add_argument('--temperature', type=float, default=0)
     parser.add_argument('--num_beams', type=int, default=1)
@@ -448,8 +466,6 @@ if __name__ == "__main__":
     parser.add_argument('--peft_type', type=str, default=None, choices=['lora'])
     parser.add_argument('--enable_fsdp', action='store_true')
     parser.add_argument('--deepspeed', action='store_true')
-    parser.add_argument('--mixed_precision', action='store_true')
-    parser.add_argument('--use_fp16', action='store_true')
 
     parser.add_argument('--lora_r', type=int, default=16, help='rank in LoRA')
     parser.add_argument('--lora_alpha', type=int, default=32, help='alpha in LoRA')
@@ -459,6 +475,7 @@ if __name__ == "__main__":
     parser.add_argument('--inference_nowrite', action='store_true')
 
     args = parser.parse_args()
+    # + ('_half' if args.use_16_full else '')
     args.ckpt_path = args.ckpt_path % (args.model_name, args.peft_type+f"{args.lora_r}", args.pad_method, args.lr)
     if args.deepspeed:
         args.deepspeed = './config/deepspeed_config.json'
@@ -492,9 +509,15 @@ if __name__ == "__main__":
     elif args.task == 'evaluate':
         if args.machine == 'cirrus':
             args.max_memory = {0: "4GiB", 1: "14GiB", 2: "14GiB", 3: "14GiB"}
+        elif args.machine == 'cirrus_half':
+            args.max_memory = {0: "13GiB", 1: "15GiB"}
         elif args.machine == 'gala1':
             args.max_memory = {0: "12GiB", 1: "22GiB"}  # , 2: "22GiB"}
             # args.max_memory = None
+        elif args.machine == 'gala1dp':
+            args.max_memory = None
+        elif args.machine == 'gala1sgl':
+            args.max_memory = {0: "20GiB"}
         else:
             raise ValueError(f"Unknown machine {args.machine}")
         
@@ -512,20 +535,27 @@ if __name__ == "__main__":
     elif args.task == 'predict':
         if args.machine == 'cirrus':
             args.max_memory = {0: "4GiB", 1: "14GiB", 2: "14GiB", 3: "14GiB"}
+        elif args.machine == 'cirrus_half':
+            args.max_memory = {0: "13GiB", 1: "15GiB"}
         elif args.machine == 'gala1':
-            args.max_memory = {0: "12GiB", 1: "22GiB"}  # , 2: "22GiB"}
+            args.max_memory = {0: "14GiB", 1: "15GiB"}  # , 2: "22GiB"}
             # args.max_memory = None
+        elif args.machine == 'gala1dp':
+            args.max_memory = None
+        elif args.machine == 'gala1sgl':
+            args.max_memory = {0: "20GiB"}
         else:
             raise ValueError(f"Unknown machine {args.machine}")
 
-        if args.inference_fn is None:
-            args.inference_fn = args.test_fn
+        # if args.inference_fn is None:
+        #     args.inference_fn = args.test_fn
+        args.inference_fn = args.inference_fn % args.inference_id
         ckpt_path = os.path.join(args.ckpt_path, args.inf_ckpt_name)
         inference_fpath = os.path.join(args.data_root, args.inference_fn)
 
         # eval_llama2_peft(args, model_path, ckpt_path, eval_fn=inference_fpath)
 
         inference_llama2_peft(args, model_path, ckpt_path=ckpt_path, inference_fn=inference_fpath, inference_id=args.inference_id,
-                              evaluate=True, write_to_file=not args.inference_nowrite, debug=args.debug)
+                              evaluate=False, write_to_file=not args.inference_nowrite, debug=args.debug)
     else:
         raise ValueError(f"Unknown task {args.task}")

@@ -21,11 +21,13 @@ The format conversion is done by querying [GPT-4](https://openai.com/research/gp
 ## Scripts
 
 - ` srun -p gpu --gres gpu:2 --kill-on-bad-exit --qos gpu --pty bash -i `
-- Train: ` CUDA_VISIBLE_DEVICES="6,7" nohup python -u llama2oie.py --model_root ../lms --model_name llama2-7b-chat-hf --task peft --machine gala1 --lr 3e-5 --pad_method bos --peft_type lora --lora_r 16 --num_epochs 20 > ./nhlogs/llama2oie_7bc_lora16_bos_3e-5.log & ` 
+- Train: ` CUDA_VISIBLE_DEVICES="6,7" nohup python -u llama2oie.py --model_root ../lms --model_name llama2-7b-chat-hf --task peft --machine gala1 --lr 5e-5 --pad_method bos --peft_type lora --lora_r 64 --num_epochs 12 > ./nhlogs/llama2oie_7bc_lora64_bos_5e-5_retry.log & ` 
 
-- Evaluate: ` CUDA_VISIBLE_DEVICES="4,5" nohup python -u llama2oie.py --model_root ../lms --model_name llama2-7b-chat-hf --task evaluate --eval_subset dev --machine gala1 --peft_type lora --pad_method bos --lr 1e-4 --lora_r 32 --eval_bsz 1 --f_score_beta 0.5 --debug > ./nhlogs/llama2oie_7bc_lora32_bos_1e-4_eval_dev.log & `
-
-- Inference on News Corpora: ` nohup python -u llama2oie.py --model_root ../lms --model_name llama2-7b-chat-hf --task inference --data_root [YOUR_PATH_TO_NS/NC] --inference_fn [YOUR_NS/NC_FILENAME] --inference_id [NS/NC] --machine gala1 --peft_type lora --pad_method bos --lr 1e-4 --lora_r 64 --eval_bsz 4 > ./nhlogs/llama2oie_7bc_lora_[NS/NC].log & `
+- Evaluate: ` CUDA_VISIBLE_DEVICES="7" python -u llama2oie.py --machine gala1sgl --model_root ../lms --model_name llama2-7b-chat-hf --task evaluate --eval_subset test --peft_type lora --pad_method bos --lr 5e-5 --lora_r 64 --eval_bsz 8 --f_score_beta 0.5 --debug --use_16_full > ./nhlogs/llama2oie_7bc_lora64_bos_5e-5_eval_test_fp16.log & `
+``
+- Inference on News Corpora: ` CUDA_VISIBLE_DEVICES="6,7" nohup python -u llama2oie.py --model_root ../lms --model_name llama2-7b-chat-hf --task inference --data_root [YOUR_PATH_TO_NS/NC] --inference_fn [YOUR_NS/NC_FILENAME] --inference_id [NS/NC] --machine gala1 --peft_type lora --pad_method bos --lr 5e-5 --lora_r 64 --eval_bsz 4 > ./nhlogs/llama2oie_7bc_lora_[NS/NC].log & `
+    - Example: ` CUDA_VISIBLE_DEVICES="7" nohup python -u llama2oie.py --machine gala1sgl --model_root ../lms --model_name llama2-7b-chat-hf --task predict --data_root ./newsspike/splits --inference_id 3 --peft_type lora --pad_method bos --lr 5e-5 --lora_r 64 --eval_bsz 8 --debug --use_16_full > ./inflogs/llama2oie_lora64_bos_5e-5_fp16_ns_3.log & `
+    - bash: ` nohup bash run_nightly.sh 82 1 7 > ./inflogs/run_82.log & `
 
 Hyper-parameters to tune:
 - `--lr`: 1e-4 / 3e-5 / 1e-5
@@ -50,7 +52,41 @@ If more than one node is required, exclusive mode --exclusive and --gres=gpu:4 o
 
 | Model | Levenshtein Distance | Macro F-1 | Micro F-1 |
 | --- | --- | --- | --- |
-| LoRA LLaMA-7b | 5.73 | 48.51% | 44.08% |
+| LoRA LLaMA-7b | 5.85 | 50.21% | 44.58% |
+
+
+Performance FP-16 (activations only):
+
+average Levenshtein Distance: 5.856714178544636
+------------------
+Evaluation results for test:
+Macro Precision: 0.5091859335622744
+Macro Recall: 0.49692482990504494
+Macro F-0.5: 0.5066855457273697
+Macro F-1: 0.5029806709421882
+------------------
+Micro Precision: 0.45112961308637095
+Micro Recall: 0.4409099173443718
+Micro F-0.5: 0.4490479482274383
+Micro F-1: 0.4459612239862576
+------------------
+Finished.
+
+Performance Full FP-16 (model + activations):
+
+average Levenshtein Distance: 5.860029940119761
+------------------
+Evaluation results for test:
+Macro Precision: 0.5076758607844291
+Macro Recall: 0.49679700222982387
+Macro F-0.5: 0.5054621392471024
+Macro F-1: 0.5021775202274847
+------------------
+Micro Precision: 0.4421115290553989
+Micro Recall: 0.44048939463313813
+Micro F-0.5: 0.4417861470937852
+Micro F-1: 0.44129897118183364
+------------------
 
 ## Link to LoRA-trained model
 

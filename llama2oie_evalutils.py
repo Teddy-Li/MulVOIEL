@@ -4,7 +4,7 @@ from Levenshtein import distance as levenstein_distance
 from transformers import LlamaTokenizerFast
 from typing import List
 from itertools import permutations
-
+import copy
 import signal
 
 def handler(signum, frame):
@@ -35,13 +35,22 @@ def parse_outstr_to_triples(oie_str: str):
     output_triples = []
 
     tpl_strs = oie_str.split('\n')
-    tpl_strs = [x.strip(' ') for x in tpl_strs]
-    tpl_strs = list(set(tpl_strs))
+    nlst = []
+    for tstr in tpl_strs:
+        if tstr.strip(' ') == '':
+            continue
+        elif tstr in nlst:
+            continue
+        else:
+            nlst.append(tstr)
+    tpl_strs = copy.deepcopy(nlst)
+    del nlst
+
     for tidx, tstr in enumerate(tpl_strs):
         if tidx > 0:
             t_list = tstr.split('.')
             if not t_list[0].isdigit():
-                print(f"Warning: {tstr}: not a valid triple string", file=sys.stderr)
+                # print(f"Warning: {tstr}: not a valid triple string", file=sys.stderr)
                 continue
             tstr = '.'.join(t_list[1:])
             del t_list
@@ -49,7 +58,7 @@ def parse_outstr_to_triples(oie_str: str):
             pass
         tpl_argslist = tstr.split(',,')
         if len(tpl_argslist) < 2:
-            print(f"Warning: {tstr}: not a valid triple string", file=sys.stderr)
+            # print(f"Warning: {tstr}: not a valid triple string", file=sys.stderr)
             continue
         subj = tpl_argslist[0].strip(' ')
         pred = tpl_argslist[1].strip(' ')
@@ -65,11 +74,14 @@ def parse_outstr_to_triples(oie_str: str):
             if len(curr_obj_tup) == 1:
                 prep = ""
                 obj = curr_obj_tup[0]
-            elif len(curr_obj_tup) == 2:
-                prep = curr_obj_tup[0]
-                obj = curr_obj_tup[1]
+            elif len(curr_obj_tup) >= 2:
+                if len(curr_obj_tup) > 2:
+                    # print(f"Warning: {curr_obj_tup} length larger than 2! Only the last two are kept.", file=sys.stderr)
+                    pass
+                prep = curr_obj_tup[-2]
+                obj = curr_obj_tup[-1]
             else:
-                print(f"Warning: {tstr}: not a valid triple string", file=sys.stderr)
+                # print(f"Warning: {tstr}: not a valid triple string", file=sys.stderr)
                 continue
             prep = prep.strip(' ')
             obj = obj.strip(' ')
@@ -232,3 +244,12 @@ def compare_prediction_gold(pred_str: str, gold_str: str, lemmatizer: WordNetLem
             'rec_num': recall_numerator, 'rec_den': recall_denominator, 'rec': rec,
             'f_score': f_score, 'f_beta': f_score_beta, 'levenshtein_dists': levenshtein_dists
             }
+
+
+if __name__ == '__main__':
+    a = parse_outstr_to_triples("""A casting director ,,  is ,, at ### the time
+2. the casting director ,,  told ,, Scott ,, that ### he had wished that he 'd met him a week before
+3. Scott ,,  met ,, the casting director ,, a week before
+4. the casting director ,,  is casting ,, for ### the `` G.I. Joe '' cartoon
+5. the `` G.I. Joe '' cartoon ,,  is casting ,, for ### the `` G.I. Joe '' cartoon""")
+    print(a)

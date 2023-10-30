@@ -98,6 +98,52 @@
             "env": {
                 "CUDA_VISIBLE_DEVICES": "6,7",
             }
+        },
+        {
+            "name": "llama2oie predict",
+            "type": "python",
+            "request": "launch",
+            "cwd": "/home/tianyi/llamaOIE",
+            "program": "/home/tianyi/llamaOIE/llama2oie.py",
+            "console": "integratedTerminal",
+            "python": "/home/tianyi/anaconda3/envs/llama/bin/python",
+            "args": [
+                "--model_root",
+                "/home/tianyi/lms",
+                "--model_name",
+                "llama2-7b-chat-hf",
+                "--task",
+                "predict",
+                "--machine",
+                "gala1sgl",
+                "--eval_bsz",
+                "4",
+                "--pad_method",
+                "bos",
+                "--peft_type",
+                "lora",
+                "--f_score_beta",
+                "0.5",
+                "--inf_ckpt_name",
+                "best_model",
+                "--debug",
+                "--lora_r",
+                "64",
+                "--lr",
+                "5e-5",
+                "--data_root",
+                "./newsspike",
+                "--inference_fn",
+                "news_gen8_p.jsontoy",
+                "--inference_id",
+                "test2",
+                "--use_16_full"
+                // "--deepspeed",
+                // "--mixed_precision",
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "7",
+            }
         }
     ]
 }
