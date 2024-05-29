@@ -1,7 +1,6 @@
 import sys
 from nltk.stem import WordNetLemmatizer
 from Levenshtein import distance as levenstein_distance
-from transformers import LlamaTokenizerFast
 from typing import List
 from itertools import permutations
 import copy
@@ -247,6 +246,7 @@ def compare_prediction_gold(pred_str: str, gold_str: str, lemmatizer: WordNetLem
 
 
 if __name__ == '__main__':
+    # For debugging purposes
     a = parse_outstr_to_triples("""A casting director ,,  is ,, at ### the time
 2. the casting director ,,  told ,, Scott ,, that ### he had wished that he 'd met him a week before
 3. Scott ,,  met ,, the casting director ,, a week before
