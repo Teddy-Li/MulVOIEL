@@ -176,7 +176,7 @@ def merge_trained_model(args, model_path, ckpt_path, merged_path):
 
     print(f"Model merged and saved to {merged_path}.")
 
-@DeprecationWarning("This function is deprecated, use merge_trained_model instead.")
+# @DeprecationWarning("This function is deprecated, use merge_trained_model instead.")
 def merge_quantize_trained_model(args, model_path, ckpt_path, merged_path, merged_quantized_path):
     model = AutoModelForCausalLM.from_pretrained(model_path, device_map='auto', torch_dtype=torch.bfloat16)  #  , no_split_module_classes=['LlamaDecoderLayer']
     model = PeftModel.from_pretrained(model, ckpt_path)

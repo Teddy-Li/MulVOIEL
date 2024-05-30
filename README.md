@@ -2,6 +2,63 @@
 
 This repository presents a strong Open Information Extraction (Open IE) model, based on LLaMA LLMs and LoRA fine-tuning. The model is capable of extracting multi-valent relations (with >2 arguments).
 
+## Get Started
+
+### Using the Model
+
+1. Install the relevant libraries (using the LLaMA3-8b-instruct model as an example):
+    ```bash
+    pip install transformers datasets peft torch
+    ```
+2. Load the model and perform inference (example):
+    ```python
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from peft import PeftModel
+    import torch
+    from llamaOIE import parse_outstr_to_triples
+    from llamaOIE_dataset import prepare_input
+
+    base_model_name = "meta-llama/Meta-Llama-3-8B-Instruct"
+    peft_adapter_name = "Teddy487/LLaMA3-8b-for-OpenIE"
+
+    model = AutoModelForCausalLM.from_pretrained(base_model_name)
+    model = PeftModel.from_pretrained(model, peft_adapter_name)
+    tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+
+    input_text = "Earlier this year , President Bush made a final `` take - it - or - leave it '' offer on the minimum wage"
+    input_text, _ = prepare_input({'s': input_text}, tokenizer, has_labels=False)
+
+    input_ids = tokenizer(input_text, return_tensors="pt").input_ids
+
+    outputs = model.generate(input_ids)
+    outstr = tokenizer.decode(outputs[0][len(input_ids):], skip_special_tokens=True)
+    triples = parse_outstr_to_triples(outstr)
+
+    for tpl in triples:
+        print(tpl)
+    ```
+
+### Training the Model
+
+1. Clone the repository and install the requirements:
+    ```bash
+    git clone https://github.com/Teddy-Li/MuVOIEL
+    cd MuVOIEL
+    conda create -n MuVOIEL python=3.10
+    pip install -r requirements.txt
+    ```
+
+2. Train the model (example):
+    ```bash
+    python -u llama2oie.py --model_root ../lms --model_name meta-llama/Meta-Llama-3-8B-Instruct --task peft --lr 5e-5 --pad_method bos --peft_type lora --lora_r 64 --num_epochs 12
+    ```
+
+    Please explore more options and hyper-parameters in the [script](llamaOIE.py), as well as the section below.
+
+3. Evaluate the model (example):
+    ```bash
+    python -u llama2oie.py --model_root ../lms --model_name meta-llama/Meta-Llama-3-8B-Instruct --task evaluate --eval_subset test --peft_type lora --pad_method bos --lr 1e-4 --lora_r 64 --eval_bsz 8 --f_score_beta 0.5 --debug
+    ```
 
 ## Overview
 
@@ -151,7 +208,3 @@ If more than one node is required, exclusive mode --exclusive and --gres=gpu:4 o
 | LoRA LLaMA3-8b-instruct bfloat16 1e-4 TPLT train ZeroShot eval promptV5 | 5.1769 | 53.67% | 47.246% |
 | LoRA LLaMA3-8b-instruct bfloat16 1e-4 TPLT train ZeroShot eval promptV5+\n | 5.1769 | 53.67% | 47.246% |
 | LoRA LLaMA3-8b-instruct bfloat16 5e-5 TPLT train ZeroShot eval promptV5 | 5.0438 | 55.32% | 48.49% | -->
-
-## Other requirements
-
-Please use `python >= 3.7` to ensure correct behavior w.r.t item ordering.

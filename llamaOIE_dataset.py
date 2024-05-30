@@ -94,7 +94,7 @@ def prepare_input(entry, tokenizer, has_labels=True, use_examples=False):
             tpls.append(tpl_str)
     else:
         sent = entry['s']
-        ident = f"{entry['articleId']}_{entry['lineId']}"
+        ident = f"{entry['articleId']}_{entry['lineId']}" if 'articleId' in entry else ''
         tpls = []
     # Open relation tuples are predicate-argument structures from the original text.
     # There may be one, two or more relation tuples per sentence.
