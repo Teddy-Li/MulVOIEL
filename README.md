@@ -208,3 +208,10 @@ If more than one node is required, exclusive mode --exclusive and --gres=gpu:4 o
 | LoRA LLaMA3-8b-instruct bfloat16 1e-4 TPLT train ZeroShot eval promptV5 | 5.1769 | 53.67% | 47.246% |
 | LoRA LLaMA3-8b-instruct bfloat16 1e-4 TPLT train ZeroShot eval promptV5+\n | 5.1769 | 53.67% | 47.246% |
 | LoRA LLaMA3-8b-instruct bfloat16 5e-5 TPLT train ZeroShot eval promptV5 | 5.0438 | 55.32% | 48.49% | -->
+
+
+## Cite Us
+
+Coming soon......
+
+<!-- If you find this repository helpful -->
