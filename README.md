@@ -1,4 +1,4 @@
-# MuVOIEL: Multi-Valent Open IE with LLaMA
+# MulVOIEL: Multi-Valent Open IE with LLaMA
 
 This repository presents a strong Open Information Extraction (Open IE) model, based on LLaMA LLMs and LoRA fine-tuning. The model is capable of extracting multi-valent relations (with >2 arguments).
 
@@ -42,9 +42,9 @@ This repository presents a strong Open Information Extraction (Open IE) model, b
 
 1. Clone the repository and install the requirements:
     ```bash
-    git clone https://github.com/Teddy-Li/MuVOIEL
-    cd MuVOIEL
-    conda create -n MuVOIEL python=3.10
+    git clone https://github.com/Teddy-Li/MulVOIEL
+    cd MulVOIEL
+    conda create -n MulVOIEL python=3.10
     pip install -r requirements.txt
     ```
 
